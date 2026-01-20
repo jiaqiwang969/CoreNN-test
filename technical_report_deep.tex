@@ -184,6 +184,99 @@ HNSW 构建了一个多层图结构：
 
 \textbf{证明}：每层的期望节点数为 $n \cdot e^{-l \cdot \ln(M_L)}$。从顶层到底层，每层的搜索复杂度为 $O(M)$（$M$ 是最大连接数）。总层数为 $O(\log n)$，因此总复杂度为 $O(M \log n) = O(\log n)$（$M$ 为常数）。
 
+\section{CoreNN 的工程创新：从内存到磁盘的优雅过渡}
+
+\subsection{设计哲学：成本与性能的平衡}
+
+传统向量数据库面临一个根本性的权衡：DRAM 提供高性能但成本昂贵（约 \$10/GB），而 SSD 成本低廉（约 \$0.10-0.25/GB）但访问延迟高。CoreNN 的核心创新在于通过智能的两阶段架构，实现了 \textbf{40-100 倍的成本降低}，同时保持可接受的性能。
+
+\begin{definition}[成本效率比]
+定义向量数据库的成本效率比为：
+\begin{equation}
+\eta = \frac{\text{QPS} \times \text{Recall@k}}{\text{Cost per GB} \times \text{Storage GB}}
+\end{equation}
+其中 QPS 是每秒查询数，Recall@k 是召回率。
+\end{definition}
+
+\subsection{两阶段存储架构}
+
+CoreNN 采用透明的两阶段过渡机制，根据数据规模自动切换存储策略。
+
+\subsubsection{阶段 I：内存优先（Memory-First）}
+
+当数据量较小时（$n < n_{\text{threshold}}$），所有数据驻留在内存中：
+
+\begin{equation}
+\mathcal{S}_{\text{mem}} = \{(\mathbf{v}_i, \mathcal{N}_i) : i \in [n]\}
+\end{equation}
+
+其中 $\mathbf{v}_i \in \mathbb{R}^d$ 是完整精度向量，$\mathcal{N}_i$ 是邻接表。
+
+\textbf{性能特征}：
+\begin{itemize}
+    \item 查询延迟：$O(\log n \cdot t_{\text{mem}})$，其中 $t_{\text{mem}} \approx 100$ ns
+    \item 内存占用：$O(nd + nM\log n)$
+    \item 适用场景：$n < 10^7$（对于 $d=128$）
+\end{itemize}
+
+\subsubsection{阶段 II：磁盘混合（Disk-Hybrid）}
+
+当数据量超过阈值时，CoreNN 自动过渡到磁盘混合模式：
+
+\begin{equation}
+\begin{aligned}
+\mathcal{S}_{\text{mem}} &= \{\tilde{\mathbf{v}}_i : i \in [n]\} \quad \text{（压缩向量）} \\
+\mathcal{S}_{\text{disk}} &= \{(\mathbf{v}_i, \mathcal{N}_i) : i \in [n]\} \quad \text{（完整数据）}
+\end{aligned}
+\end{equation}
+
+其中 $\tilde{\mathbf{v}}_i$ 是通过乘积量化压缩的向量。
+
+\subsection{后向边增量优化（Backedge Deltas）}
+
+这是 CoreNN 相对于 FreshDiskANN 的关键创新。
+
+\subsubsection{问题：写放大}
+
+在 HNSW 中插入新节点 $v_{\text{new}}$ 时，需要更新其 $M$ 个邻居的邻接表：
+
+\begin{equation}
+\forall u \in \mathcal{N}(v_{\text{new}}): \mathcal{N}(u) \gets \mathcal{N}(u) \cup \{v_{\text{new}}\}
+\end{equation}
+
+这导致 \textbf{写放大}：插入一个节点需要写入 $M+1$ 个节点的数据。
+
+\begin{definition}[写放大因子]
+\begin{equation}
+\text{WAF} = \frac{\text{实际写入字节数}}{\text{逻辑写入字节数}} = \frac{(M+1) \cdot s}{s} = M+1
+\end{equation}
+其中 $s$ 是单个节点的存储大小。
+\end{definition}
+
+\subsubsection{CoreNN 解决方案}
+
+CoreNN 为每个节点维护两个邻接表：
+
+\begin{equation}
+\begin{aligned}
+\mathcal{N}_{\text{base}}(v) &: \text{基础邻接表（不可变）} \\
+\mathcal{N}_{\text{delta}}(v) &: \text{增量邻接表（可追加）}
+\end{aligned}
+\end{equation}
+
+查询时合并两者：
+\begin{equation}
+\mathcal{N}(v) = \mathcal{N}_{\text{base}}(v) \cup \mathcal{N}_{\text{delta}}(v)
+\end{equation}
+
+\begin{theorem}[写放大降低]
+使用 Backedge Deltas，平均写放大因子降低为：
+\begin{equation}
+\text{WAF}_{\text{avg}} = 1 + \frac{M}{f}
+\end{equation}
+其中 $f$ 是合并频率（每 $f$ 次插入合并一次）。当 $f \gg M$ 时，$\text{WAF}_{\text{avg}} \approx 1$。
+\end{theorem}
+
 \section{特征工程：从哈希到 N-gram}
 
 \subsection{问题：为什么 MD5 哈希不适合相似性搜索？}

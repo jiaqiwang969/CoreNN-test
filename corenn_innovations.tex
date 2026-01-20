@@ -1,0 +1,266 @@
+\section{CoreNN 的工程创新：从内存到磁盘的优雅过渡}
+
+\subsection{设计哲学：成本与性能的平衡}
+
+传统向量数据库面临一个根本性的权衡：DRAM 提供高性能但成本昂贵（约 \$10/GB），而 SSD 成本低廉（约 \$0.10-0.25/GB）但访问延迟高。CoreNN 的核心创新在于通过智能的两阶段架构，实现了 \textbf{40-100 倍的成本降低}，同时保持可接受的性能。
+
+\begin{definition}[成本效率比]
+定义向量数据库的成本效率比为：
+\begin{equation}
+\eta = \frac{\text{QPS} \times \text{Recall@k}}{\text{Cost per GB} \times \text{Storage GB}}
+\end{equation}
+其中 QPS 是每秒查询数，Recall@k 是召回率。
+\end{definition}
+
+\subsection{两阶段存储架构}
+
+CoreNN 采用透明的两阶段过渡机制，根据数据规模自动切换存储策略。
+
+\subsubsection{阶段 I：内存优先（Memory-First）}
+
+当数据量较小时（$n < n_{\text{threshold}}$），所有数据驻留在内存中：
+
+\begin{equation}
+\mathcal{S}_{\text{mem}} = \{(\mathbf{v}_i, \mathcal{N}_i) : i \in [n]\}
+\end{equation}
+
+其中 $\mathbf{v}_i \in \mathbb{R}^d$ 是完整精度向量，$\mathcal{N}_i$ 是邻接表。
+
+\textbf{性能特征}：
+\begin{itemize}
+    \item 查询延迟：$O(\log n \cdot t_{\text{mem}})$，其中 $t_{\text{mem}} \approx 100$ ns
+    \item 内存占用：$O(nd + nM\log n)$
+    \item 适用场景：$n < 10^7$（对于 $d=128$）
+\end{itemize}
+
+\subsubsection{阶段 II：磁盘混合（Disk-Hybrid）}
+
+当数据量超过阈值时，CoreNN 自动过渡到磁盘混合模式：
+
+\begin{equation}
+\begin{aligned}
+\mathcal{S}_{\text{mem}} &= \{\tilde{\mathbf{v}}_i : i \in [n]\} \quad \text{（压缩向量）} \\
+\mathcal{S}_{\text{disk}} &= \{(\mathbf{v}_i, \mathcal{N}_i) : i \in [n]\} \quad \text{（完整数据）}
+\end{aligned}
+\end{equation}
+
+其中 $\tilde{\mathbf{v}}_i$ 是通过乘积量化压缩的向量。
+
+\subsection{乘积量化（Product Quantization）的数学原理}
+
+\begin{definition}[乘积量化]
+将 $d$ 维向量分解为 $m$ 个子空间，每个子空间维度为 $d/m$：
+\begin{equation}
+\mathbf{v} = [\mathbf{v}^{(1)}, \mathbf{v}^{(2)}, \ldots, \mathbf{v}^{(m)}]
+\end{equation}
+对每个子空间 $j$，学习码本 $\mathcal{C}_j = \{\mathbf{c}_j^{(1)}, \ldots, \mathbf{c}_j^{(K)}\}$（通常 $K=256$），将 $\mathbf{v}^{(j)}$ 量化为最近的码字索引：
+\begin{equation}
+q_j = \arg\min_{k \in [K]} \|\mathbf{v}^{(j)} - \mathbf{c}_j^{(k)}\|_2
+\end{equation}
+\end{definition}
+
+\textbf{压缩比分析}：
+\begin{align}
+\text{原始大小} &= d \times 4 \text{ bytes (float32)} \\
+\text{压缩大小} &= m \times \log_2 K \text{ bits} = m \text{ bytes (K=256)} \\
+\text{压缩比} &= \frac{4d}{m}
+\end{align}
+
+对于 $d=512, m=64$，压缩比为 $32\times$。
+
+\begin{theorem}[PQ 距离近似误差]
+设 $\tilde{\mathbf{v}}$ 是 $\mathbf{v}$ 的 PQ 近似，则距离计算误差满足：
+\begin{equation}
+|\|\mathbf{q} - \mathbf{v}\|_2 - \|\mathbf{q} - \tilde{\mathbf{v}}\|_2| \leq \sqrt{m} \cdot \epsilon_{\text{quant}}
+\end{equation}
+其中 $\epsilon_{\text{quant}}$ 是每个子空间的量化误差。
+\end{theorem}
+
+\subsection{后向边增量优化（Backedge Deltas）}
+
+这是 CoreNN 相对于 FreshDiskANN 的关键创新。
+
+\subsubsection{问题：写放大}
+
+在 HNSW 中插入新节点 $v_{\text{new}}$ 时，需要更新其 $M$ 个邻居的邻接表：
+
+\begin{equation}
+\forall u \in \mathcal{N}(v_{\text{new}}): \mathcal{N}(u) \gets \mathcal{N}(u) \cup \{v_{\text{new}}\}
+\end{equation}
+
+这导致 \textbf{写放大}：插入一个节点需要写入 $M+1$ 个节点的数据。
+
+\begin{definition}[写放大因子]
+\begin{equation}
+\text{WAF} = \frac{\text{实际写入字节数}}{\text{逻辑写入字节数}} = \frac{(M+1) \cdot s}{s} = M+1
+\end{equation}
+其中 $s$ 是单个节点的存储大小。
+\end{definition}
+
+\subsubsection{CoreNN 解决方案}
+
+CoreNN 为每个节点维护两个邻接表：
+
+\begin{equation}
+\begin{aligned}
+\mathcal{N}_{\text{base}}(v) &: \text{基础邻接表（不可变）} \\
+\mathcal{N}_{\text{delta}}(v) &: \text{增量邻接表（可追加）}
+\end{aligned}
+\end{equation}
+
+查询时合并两者：
+\begin{equation}
+\mathcal{N}(v) = \mathcal{N}_{\text{base}}(v) \cup \mathcal{N}_{\text{delta}}(v)
+\end{equation}
+
+\textbf{存储策略}：
+\begin{itemize}
+    \item $\mathcal{N}_{\text{base}}(v)$ 和 $\mathcal{N}_{\text{delta}}(v)$ 存储在不同的 RocksDB 键
+    \item 插入时只追加到 $\mathcal{N}_{\text{delta}}$，避免重写 $\mathcal{N}_{\text{base}}$
+    \item 定期合并（compaction）：$\mathcal{N}_{\text{base}} \gets \mathcal{N}_{\text{base}} \cup \mathcal{N}_{\text{delta}}$
+\end{itemize}
+
+\begin{theorem}[写放大降低]
+使用 Backedge Deltas，平均写放大因子降低为：
+\begin{equation}
+\text{WAF}_{\text{avg}} = 1 + \frac{M}{f}
+\end{equation}
+其中 $f$ 是合并频率（每 $f$ 次插入合并一次）。当 $f \gg M$ 时，$\text{WAF}_{\text{avg}} \approx 1$。
+\end{theorem}
+
+\subsection{隐式重排序（Implicit Reranking）}
+
+CoreNN 利用磁盘 I/O 的特性实现"免费"的精确重排序。
+
+\subsubsection{磁盘 I/O 粒度}
+
+现代 SSD 的最小读取单位通常为 4KB：
+
+\begin{equation}
+\text{Read}(\text{offset}, \text{size}) \rightarrow \text{实际读取} = \lceil \frac{\text{size}}{4096} \rceil \times 4096 \text{ bytes}
+\end{equation}
+
+\subsubsection{存储布局优化}
+
+CoreNN 将完整向量与邻接表打包存储：
+
+\begin{equation}
+\text{Node}(v) = [\mathbf{v}, \mathcal{N}(v)] = [\underbrace{d \times 4}_{\text{向量}}, \underbrace{M \times 4}_{\text{邻接表}}] \text{ bytes}
+\end{equation}
+
+对于 $d=128, M=32$：
+\begin{equation}
+\text{size} = 128 \times 4 + 32 \times 4 = 640 \text{ bytes} < 4096 \text{ bytes}
+\end{equation}
+
+\textbf{关键洞察}：读取邻接表时，完整向量"免费"获得！
+
+\subsubsection{两阶段查询}
+
+\begin{algorithm}
+\caption{CoreNN 磁盘查询}
+\begin{algorithmic}[1]
+\Procedure{DiskQuery}{$\mathbf{q}, k$}
+    \State \textbf{阶段 1：粗筛选}
+    \State $C \gets \Call{HNSWSearch}{\mathbf{q}, k'}$ using PQ vectors \Comment{$k' > k$}
+    \State \textbf{阶段 2：精确重排序}
+    \For{each $v \in C$}
+        \State $(\mathbf{v}, \mathcal{N}(v)) \gets \Call{DiskRead}{v}$ \Comment{读取完整向量}
+        \State $d_v \gets \|\mathbf{q} - \mathbf{v}\|_2$ \Comment{精确距离}
+    \EndFor
+    \State \Return Top-$k$ by exact distance
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\textbf{性能分析}：
+\begin{itemize}
+    \item 粗筛选：$O(\log n)$ 次 PQ 距离计算（内存）
+    \item 精确重排序：$O(k')$ 次磁盘读取 + 精确距离计算
+    \item 总延迟：$O(\log n \cdot t_{\text{mem}} + k' \cdot t_{\text{disk}})$
+\end{itemize}
+
+其中 $t_{\text{disk}} \approx 100 \mu s$（NVMe SSD）。
+
+\subsection{多精度支持与 SIMD 优化}
+
+CoreNN 原生支持多种数据类型，并使用 AVX-512 指令集优化计算。
+
+\subsubsection{支持的数据类型}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lccc@{}}
+\toprule
+\textbf{类型} & \textbf{位宽} & \textbf{范围/精度} & \textbf{压缩比} \\
+\midrule
+float32 & 32 bits & $\pm 3.4 \times 10^{38}$ & 1$\times$ \\
+float16 & 16 bits & $\pm 65504$ & 2$\times$ \\
+bfloat16 & 16 bits & $\pm 3.4 \times 10^{38}$ (低精度) & 2$\times$ \\
+int8 & 8 bits & $[-128, 127]$ & 4$\times$ \\
+binary & 1 bit & $\{0, 1\}$ & 32$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{CoreNN 支持的向量数据类型}
+\end{table}
+
+\subsubsection{AVX-512 向量化}
+
+AVX-512 可以并行处理 16 个 float32 或 64 个 int8：
+
+\begin{equation}
+\text{Throughput} = \frac{512 \text{ bits}}{w \text{ bits/element}} \times f_{\text{CPU}}
+\end{equation}
+
+其中 $w$ 是元素位宽，$f_{\text{CPU}}$ 是 CPU 频率。
+
+\textbf{示例}：对于 3.0 GHz CPU，float32 内积吞吐量：
+\begin{equation}
+\text{Throughput} = \frac{512}{32} \times 3.0 \times 10^9 = 48 \text{ GFLOPS/core}
+\end{equation}
+
+\subsection{与其他方案的对比}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{系统} & \textbf{存储} & \textbf{更新} & \textbf{成本} & \textbf{扩展性} \\
+\midrule
+FAISS (内存) & DRAM & 批量 & 高 & $< 10^8$ \\
+DiskANN & SSD & 离线 & 低 & $> 10^9$ \\
+FreshDiskANN & SSD & 在线 & 低 & $> 10^9$ \\
+\textbf{CoreNN} & \textbf{混合} & \textbf{在线} & \textbf{低} & \textbf{$> 10^9$} \\
+\bottomrule
+\end{tabular}
+\caption{向量数据库系统对比}
+\end{table}
+
+\textbf{CoreNN 的优势}：
+\begin{enumerate}
+    \item \textbf{成本效率}：通过 PQ 和磁盘存储，成本降低 40-100$\times$
+    \item \textbf{在线更新}：Backedge Deltas 实现低延迟插入
+    \item \textbf{透明过渡}：自动在内存和磁盘模式间切换
+    \item \textbf{隐式重排序}：利用磁盘 I/O 粒度"免费"获得精确距离
+\end{enumerate}
+
+\subsection{实现选择：同步 vs 异步}
+
+CoreNN 选择同步 Rust 实现，而非异步，基于以下考虑：
+
+\begin{enumerate}
+    \item \textbf{RocksDB 非异步}：底层存储引擎是 C++ 同步库
+    \item \textbf{计算密集}：向量距离计算占主要时间，非纯 I/O
+    \item \textbf{并发模型}：磁盘 I/O 扩展性与线程数相关，而非异步任务数
+    \item \textbf{工具支持}：perf、flamegraph 等性能分析工具对同步代码支持更好
+\end{enumerate}
+
+\begin{theorem}[Amdahl 定律应用]
+设计算部分占比为 $p$，I/O 部分占比为 $1-p$。异步带来的加速比上界为：
+\begin{equation}
+S_{\text{async}} \leq \frac{1}{p + \frac{1-p}{N}}
+\end{equation}
+其中 $N$ 是并发 I/O 数。当 $p$ 较大时（如 $p > 0.5$），异步收益有限。
+\end{theorem}
+
+CoreNN 的性能分析显示 $p \approx 0.6$（60\% 计算，40\% I/O），因此同步实现是合理选择。
