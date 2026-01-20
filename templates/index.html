@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CoreNN 文件搜索 - 智能文件检索系统</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 3em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+
+        .search-box {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            margin-bottom: 30px;
+        }
+
+        .search-input-wrapper {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        #searchInput {
+            flex: 1;
+            padding: 15px 20px;
+            font-size: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        #searchInput:focus {
+            border-color: #667eea;
+        }
+
+        .search-btn {
+            padding: 15px 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .search-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .search-btn:active {
+            transform: translateY(0);
+        }
+
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 10px;
+        }
+
+        .stat-item {
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #666;
+            margin-top: 5px;
+        }
+
+        .results-container {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            display: none;
+        }
+
+        .results-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #e0e0e0;
+        }
+
+        .results-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .results-count {
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .file-item {
+            padding: 20px;
+            border: 1px solid #e0e0e0;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .file-item:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+        }
+
+        .file-name {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .file-icon {
+            width: 24px;
+            height: 24px;
+            display: inline-block;
+        }
+
+        .file-path {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+
+        .file-meta {
+            display: flex;
+            gap: 20px;
+            font-size: 13px;
+            color: #999;
+        }
+
+        .file-meta span {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .score-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #667eea;
+            font-size: 18px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 60px;
+            color: #999;
+        }
+
+        .no-results-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+        }
+
+        .extension-tag {
+            display: inline-block;
+            padding: 2px 8px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #666;
+            font-weight: bold;
+        }
+
+        .quick-filters {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            background: #f5f5f5;
+            border: 1px solid #e0e0e0;
+            border-radius: 20px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .filter-btn:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .filter-btn.active {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 CoreNN 文件搜索</h1>
+            <p>基于向量数据库的智能文件检索系统</p>
+        </div>
+
+        <div class="search-box">
+            <div class="search-input-wrapper">
+                <input type="text" id="searchInput" placeholder="输入文件名、扩展名或路径进行搜索..." autofocus>
+                <button class="search-btn" onclick="performSearch()">搜索</button>
+            </div>
+
+            <div class="quick-filters">
+                <button class="filter-btn" onclick="quickSearch('.pdf')">PDF 文档</button>
+                <button class="filter-btn" onclick="quickSearch('.py')">Python 文件</button>
+                <button class="filter-btn" onclick="quickSearch('.js')">JavaScript</button>
+                <button class="filter-btn" onclick="quickSearch('.txt')">文本文件</button>
+                <button class="filter-btn" onclick="quickSearch('.jpg')">图片</button>
+                <button class="filter-btn" onclick="quickSearch('.zip')">压缩包</button>
+            </div>
+
+            <div class="stats" id="stats">
+                <div class="stat-item">
+                    <div class="stat-value" id="totalFiles">{{ total_files }}</div>
+                    <div class="stat-label">索引文件数</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="searchTime">-</div>
+                    <div class="stat-label">搜索耗时 (ms)</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="resultCount">-</div>
+                    <div class="stat-label">搜索结果</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="results-container" id="resultsContainer">
+            <div class="results-header">
+                <div class="results-title">搜索结果</div>
+                <div class="results-count" id="resultsCount"></div>
+            </div>
+            <div id="results"></div>
+        </div>
+    </div>
+
+    <script>
+        // 回车键搜索
+        document.getElementById('searchInput').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                performSearch();
+            }
+        });
+
+        function quickSearch(query) {
+            document.getElementById('searchInput').value = query;
+            performSearch();
+        }
+
+        async function performSearch() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                alert('请输入搜索内容');
+                return;
+            }
+
+            const resultsContainer = document.getElementById('resultsContainer');
+            const resultsDiv = document.getElementById('results');
+
+            // 显示加载状态
+            resultsContainer.style.display = 'block';
+            resultsDiv.innerHTML = '<div class="loading"><div class="spinner"></div>正在搜索...</div>';
+
+            const startTime = performance.now();
+
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ query: query, k: 50 })
+                });
+
+                const data = await response.json();
+                const endTime = performance.now();
+                const searchTime = (endTime - startTime).toFixed(2);
+
+                // 更新统计
+                document.getElementById('searchTime').textContent = searchTime;
+                document.getElementById('resultCount').textContent = data.total;
+                document.getElementById('resultsCount').textContent = `找到 ${data.total} 个结果`;
+
+                // 显示结果
+                if (data.results.length === 0) {
+                    resultsDiv.innerHTML = `
+                        <div class="no-results">
+                            <div class="no-results-icon">📭</div>
+                            <h3>未找到匹配的文件</h3>
+                            <p>尝试使用不同的关键词</p>
+                        </div>
+                    `;
+                } else {
+                    resultsDiv.innerHTML = data.results.map(file => `
+                        <div class="file-item" onclick="copyPath('${file.path}')">
+                            <div class="file-name">
+                                <span class="file-icon">${getFileIcon(file.extension)}</span>
+                                ${file.name}
+                                <span class="score-badge">匹配度: ${file.score}</span>
+                            </div>
+                            <div class="file-path">📁 ${file.path}</div>
+                            <div class="file-meta">
+                                <span>📏 ${file.size}</span>
+                                <span>🕒 ${file.mtime}</span>
+                                <span class="extension-tag">${file.extension || 'no ext'}</span>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+            } catch (error) {
+                resultsDiv.innerHTML = `
+                    <div class="no-results">
+                        <div class="no-results-icon">❌</div>
+                        <h3>搜索出错</h3>
+                        <p>${error.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function getFileIcon(ext) {
+            const icons = {
+                '.pdf': '📄',
+                '.doc': '📝', '.docx': '📝',
+                '.xls': '📊', '.xlsx': '📊',
+                '.ppt': '📽️', '.pptx': '📽️',
+                '.txt': '📃',
+                '.py': '🐍',
+                '.js': '📜',
+                '.html': '🌐',
+                '.css': '🎨',
+                '.jpg': '🖼️', '.jpeg': '🖼️', '.png': '🖼️', '.gif': '🖼️',
+                '.mp4': '🎬', '.avi': '🎬', '.mov': '🎬',
+                '.mp3': '🎵', '.wav': '🎵',
+                '.zip': '📦', '.rar': '📦', '.7z': '📦',
+                '.json': '📋',
+                '.xml': '📋',
+                '.md': '📖',
+            };
+            return icons[ext] || '📄';
+        }
+
+        function copyPath(path) {
+            navigator.clipboard.writeText(path).then(() => {
+                alert('文件路径已复制到剪贴板！\n' + path);
+            });
+        }
+
+        // 页面加载时获取统计信息
+        window.onload = async function() {
+            try {
+                const response = await fetch('/stats');
+                const data = await response.json();
+                document.getElementById('totalFiles').textContent = data.total_files;
+            } catch (error) {
+                console.error('获取统计信息失败:', error);
+            }
+        };
+    </script>
+</body>
+</html>

@@ -1,8 +1,63 @@
+# Python
 __pycache__/
-.testout/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
 .venv*/
-Cargo.lock
+env/
+ENV/
+*.egg-info/
 dist/
+build/
+*.egg
+
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+
+# Node.js
 node_modules/
 package-lock.json
-target/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# CoreNN specific
+.testout/
+/tmp/corenn_file_index_db/
+*.corenn_file_index.bin
+*.corenn_file_index.json
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Build artifacts
+*.o
+*.a
+*.dylib
+*.dll
+*.exe
+
+# LaTeX
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.toc
+*.out
+*.dvi
+*.bbl
+*.blg

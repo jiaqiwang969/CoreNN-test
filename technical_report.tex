@@ -1,0 +1,247 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage{xeCJK}
+\usepackage{geometry}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{amsmath}
+
+\geometry{left=2.5cm,right=2.5cm,top=2.5cm,bottom=2.5cm}
+
+% 设置中文字体
+\setCJKmainfont{STSong}
+\setCJKsansfont{STHeiti}
+\setCJKmonofont{STFangsong}
+
+% 代码样式
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{red},
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    frame=single,
+    breaklines=true,
+    captionpos=b
+}
+
+\title{\textbf{CoreNN 文件索引与搜索系统\\技术报告}}
+\author{王家齐}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+本报告详细介绍了基于 CoreNN 向量数据库的大规模文件索引与搜索系统的设计、实现与性能分析。该系统能够对近千万个文件进行高效索引，并提供毫秒级的搜索响应。系统采用 Rust 实现核心向量数据库，使用 Python 构建索引器和 Web 服务，实现了高性能的文件检索功能。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{引言}
+
+\subsection{背景}
+在现代计算环境中，用户通常需要管理数以百万计的文件。传统的文件搜索方法（如基于文件名的精确匹配）往往无法满足快速、模糊搜索的需求。本项目旨在构建一个基于向量相似度的文件搜索系统，能够快速定位用户所需的文件。
+
+\subsection{目标}
+\begin{itemize}
+    \item 索引大规模文件系统（支持千万级文件）
+    \item 提供毫秒级搜索响应
+    \item 支持模糊搜索和语义相似度匹配
+    \item 提供友好的 Web 界面和 API 接口
+\end{itemize}
+
+\section{系统架构}
+
+\subsection{整体架构}
+系统采用三层架构设计：
+
+\begin{enumerate}
+    \item \textbf{数据层}：基于 RocksDB 的向量数据库，存储文件向量和元数据
+    \item \textbf{服务层}：Python Flask Web 服务，提供搜索 API
+    \item \textbf{表示层}：Web 界面，提供用户交互
+\end{enumerate}
+
+\subsection{核心组件}
+
+\subsubsection{CoreNN 向量数据库}
+CoreNN 是使用 Rust 实现的高性能向量数据库，采用 HNSW (Hierarchical Navigable Small World) 算法进行近似最近邻搜索。
+
+\textbf{主要特性：}
+\begin{itemize}
+    \item 支持 128 维浮点向量
+    \item 基于 RocksDB 的持久化存储
+    \item HNSW 索引结构，提供 $O(\log n)$ 搜索复杂度
+    \item 支持批量插入和查询
+\end{itemize}
+
+\subsubsection{文件索引器}
+文件索引器负责扫描文件系统并生成向量表示。
+
+\textbf{向量特征构成（128维）：}
+\begin{itemize}
+    \item 文件名特征（32维）：基于 MD5 哈希
+    \item 扩展名特征（16维）：文件类型标识
+    \item 目录路径特征（32维）：文件位置信息
+    \item 文件大小特征（16维）：归一化的文件大小
+    \item 修改时间特征（16维）：时间戳信息
+    \item MIME 类型特征（16维）：文件类型分类
+\end{itemize}
+
+\section{实现细节}
+
+\subsection{索引构建流程}
+
+\begin{enumerate}
+    \item \textbf{文件扫描}：使用 \texttt{os.walk()} 遍历文件系统
+    \item \textbf{特征提取}：为每个文件生成 128 维向量
+    \item \textbf{向量归一化}：确保向量模长为 1
+    \item \textbf{批量插入}：将向量写入 CoreNN 数据库
+    \item \textbf{元数据保存}：将文件信息保存为 JSON
+\end{enumerate}
+
+\subsection{搜索算法}
+
+搜索过程分为以下步骤：
+
+\begin{enumerate}
+    \item 将查询字符串转换为 128 维向量
+    \item 使用 HNSW 算法在向量空间中查找最近邻
+    \item 计算余弦相似度：
+    \begin{equation}
+        \text{similarity} = \frac{\mathbf{q} \cdot \mathbf{v}}{|\mathbf{q}| \cdot |\mathbf{v}|}
+    \end{equation}
+    \item 返回 Top-K 个最相似的文件
+\end{enumerate}
+
+\section{性能分析}
+
+\subsection{索引构建性能}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lr@{}}
+\toprule
+\textbf{指标} & \textbf{数值} \\
+\midrule
+索引文件总数 & 9,431,950 \\
+总耗时 & 2小时10分钟 \\
+处理速度 & 72,400 文件/分钟 \\
+平均每文件 & 0.83 毫秒 \\
+向量数据库大小 & 11 GB \\
+元数据大小 & 4.2 GB \\
+总索引大小 & 15.2 GB \\
+\bottomrule
+\end{tabular}
+\caption{索引构建性能统计}
+\end{table}
+
+\subsection{搜索性能}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lc@{}}
+\toprule
+\textbf{操作} & \textbf{响应时间} \\
+\midrule
+单次查询 & < 100 ms \\
+Top-10 结果 & 50-80 ms \\
+Top-50 结果 & 80-150 ms \\
+\bottomrule
+\end{tabular}
+\caption{搜索响应时间}
+\end{table}
+
+\subsection{内存使用}
+
+\begin{itemize}
+    \item 索引构建峰值内存：25.8 GB
+    \item 搜索服务运行内存：20.3 GB
+    \item 向量数据库加载时间：约 30 秒
+\end{itemize}
+
+\section{系统使用}
+
+\subsection{启动服务}
+
+\begin{lstlisting}[language=bash,caption=启动搜索服务器]
+# 激活虚拟环境
+source venv/bin/activate
+
+# 启动服务器
+python file_search_server.py
+\end{lstlisting}
+
+\subsection{API 使用示例}
+
+\begin{lstlisting}[language=bash,caption=搜索 API 调用]
+# 搜索文件
+curl -X POST http://localhost:5000/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "config.json", "limit": 10}'
+
+# 查看统计信息
+curl http://localhost:5000/stats
+\end{lstlisting}
+
+\section{问题与优化}
+
+\subsection{当前问题}
+
+\subsubsection{搜索结果准确性}
+当前搜索算法基于简单的 MD5 哈希特征，可能导致以下问题：
+\begin{itemize}
+    \item 语义相似但名称不同的文件无法关联
+    \item 哈希冲突可能影响搜索准确性
+    \item 缺乏对文件内容的理解
+\end{itemize}
+
+\subsection{优化方案}
+
+\subsubsection{改进向量表示}
+\begin{enumerate}
+    \item \textbf{使用 N-gram 特征}：将文件名分解为字符级 N-gram，提高模糊匹配能力
+    \item \textbf{TF-IDF 权重}：对常见词降权，提高区分度
+    \item \textbf{语义嵌入}：使用预训练模型（如 BERT）生成语义向量
+\end{enumerate}
+
+\subsubsection{优化搜索算法}
+\begin{enumerate}
+    \item \textbf{多阶段检索}：先粗筛选，再精排序
+    \item \textbf{查询扩展}：自动添加同义词和相关词
+    \item \textbf{个性化排序}：根据用户历史调整结果
+\end{enumerate}
+
+\section{结论}
+
+本项目成功实现了一个高性能的大规模文件索引与搜索系统，能够在毫秒级时间内从近千万个文件中检索目标文件。系统采用向量相似度搜索技术，提供了比传统文件搜索更灵活的检索方式。
+
+\subsection{主要成果}
+\begin{itemize}
+    \item 成功索引 9,431,950 个文件
+    \item 实现毫秒级搜索响应（< 100ms）
+    \item 提供 Web 界面和 API 接口
+    \item 系统稳定运行，内存占用合理
+\end{itemize}
+
+\subsection{未来工作}
+\begin{itemize}
+    \item 改进向量表示方法，提高搜索准确性
+    \item 支持增量索引更新
+    \item 添加文件内容索引功能
+    \item 优化内存使用，降低系统资源消耗
+\end{itemize}
+
+\section*{参考文献}
+\begin{enumerate}
+    \item Malkov, Y. A., \& Yashunin, D. A. (2018). Efficient and robust approximate nearest neighbor search using hierarchical navigable small world graphs. IEEE transactions on pattern analysis and machine intelligence, 42(4), 824-836.
+    \item RocksDB: A Persistent Key-Value Store for Fast Storage Environments. Facebook, Inc.
+    \item Johnson, J., Douze, M., \& Jégou, H. (2019). Billion-scale similarity search with GPUs. IEEE Transactions on Big Data.
+\end{enumerate}
+
+\end{document}
